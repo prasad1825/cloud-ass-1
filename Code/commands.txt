@@ -1,0 +1,59 @@
+mydata = LOAD '/data/final_data.csv' using PigStorage(',') AS (Index: int, Id:int, PostTypeId:int,
+AcceptedAnswerId:int, ParentId:int, CreationDate:datetime, DeletionDate:datetime, Score:int,
+ViewCount:int, OwnerUserId:int, OwnerDisplayName:chararray, LastEditorUserId:int,
+LastEditorDisplayName:chararray, LastEditDate:datetime, LastActivityDate:datetime,
+Title:chararray, Tags:chararray, AnswerCount:int, CommentCount:int, FavoriteCount:int,
+ClosedDate:datetime, CommunityOwnedDate:datetime);
+
+
+A = FOREACH mydata GENERATE Id, Score, ViewCount, OwnerUserId, OwnerDisplayName, Title, Tags;
+
+STORE A INTO '/data/newdata' using PigStorage(',');
+
+
+create external table if not exists mytable(Id int, Score int, ViewCount int, OwnerUserId int, OwnerDisplayName string, Title string, Tags string) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',';
+
+load data local inpath '/data/data.csv' overwrite into table mytable
+
+
+select * from mytable limit 10;
+
+create table user_table as select ownerUserId as A, SUM(Score) as B from mytable group by ownerUserId;
+
+select * from user_table order by B desc limit 10;
+
+create table user_table_2 as select OwnerDisplayName as C , SUM(Score) as D from mytable group by ownerDisplayName;
+
+
+select * from user_table_2 order by D desc limit 10;
+
+select COUNT( OwnerUserId ) from mytable where Title like '%hadoop%';
+
+
+
+
+
+
+
+-----
+
+create table tf_table as select ownerUserId, Title from mytable order by Score desc limit 10;
+
+create temporary macro max2(x INT, y INT) if(x>y,x,y);
+
+create temporary macro tfidf(tf FLOAT, df_t INT, n_docs INT) tf * (log(10, CAST(n_docs
+as FLOAT)/max2(1,df_t)) + 1.0);
+
+create view exploded as select ownerUserId, word from tf_table LATERAL VIEW explode(split(Title, True)) t as word where not is_stopword(word);
+
+create view term_frequency as select ownerUserid, word, freq from (select ownerUserId, tf(word) as word2freq from exploded group by ownerUserId) t LATERAL VIEW explode(word2freq) t2 as word, freq;
+
+create or replace view document_frequency as select word, count(distinct ownerUserId) docs from exploded group by word;
+
+select count(ownerUserId) from tf_table;
+
+set hivevar:n_docs=10;
+
+create or replace view tfidf as select tf.ownerUserId, tf.word, tfidf(tf.freq, df.docs, ${n_docs}) as tfidf from term_frequency tf JOIN document_frequency df ON (tf.word = df.word) order by tfidf desc;
+
+select * from tfidf;
